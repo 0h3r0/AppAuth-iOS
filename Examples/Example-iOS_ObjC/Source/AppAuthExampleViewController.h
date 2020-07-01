@@ -37,6 +37,7 @@ NS_ASSUME_NONNULL_BEGIN
         serialize to disk.
  */
 @property(nonatomic, readonly, nullable) OIDAuthState *authState;
+@property(nonatomic, readonly, nullable) NSString *lastRefreshToken;
 
 /*! @brief Authorization code flow using @c OIDAuthState automatic code exchanges.
     @param sender IBAction sender.

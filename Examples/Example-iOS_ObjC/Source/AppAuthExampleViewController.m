@@ -28,20 +28,20 @@ typedef void (^PostRegistrationCallback)(OIDServiceConfiguration *configuration,
 
 /*! @brief The OIDC issuer from which the configuration will be discovered.
  */
-static NSString *const kIssuer = @"https://issuer.example.com";
+static NSString *const kIssuer = @"https://accounts.google.com";
 
 /*! @brief The OAuth client ID.
     @discussion For client configuration instructions, see the README.
         Set to nil to use dynamic registration with this example.
     @see https://github.com/openid/AppAuth-iOS/blob/master/Examples/Example-iOS_ObjC/README.md
  */
-static NSString *const kClientID = @"YOUR_CLIENT_ID";
+static NSString *const kClientID = @"581786658708-6p376uvvj9v1nndcljh2a0o0apss8n5c.apps.googleusercontent.com";
 
 /*! @brief The OAuth redirect URI for the client @c kClientID.
     @discussion For client configuration instructions, see the README.
     @see https://github.com/openid/AppAuth-iOS/blob/master/Examples/Example-iOS_ObjC/README.md
  */
-static NSString *const kRedirectURI = @"com.example.app:/oauth2redirect/example-provider";
+static NSString *const kRedirectURI = @"com.googleusercontent.apps.581786658708-6p376uvvj9v1nndcljh2a0o0apss8n5c:/oauth2redirect/example-provider";
 
 /*! @brief NSCoding key for the authState property.
  */
@@ -140,13 +140,13 @@ static NSString *const kAppAuthExampleAuthStateKey = @"authState";
   if (!_authState) {
     [_authAutoButton setTitle:@"Authorize" forState:UIControlStateNormal];
     [_authAutoButton setTitle:@"Authorize" forState:UIControlStateHighlighted];
-    [_authManual setTitle:@"Authorize (Manual)" forState:UIControlStateNormal];
-    [_authManual setTitle:@"Authorize (Manual)" forState:UIControlStateHighlighted];
+    [_authManual setTitle:@"Authorize" forState:UIControlStateNormal];
+    [_authManual setTitle:@"Authorize" forState:UIControlStateHighlighted];
   } else {
-    [_authAutoButton setTitle:@"Re-authorize" forState:UIControlStateNormal];
-    [_authAutoButton setTitle:@"Re-authorize" forState:UIControlStateHighlighted];
-    [_authManual setTitle:@"Re-authorize (Manual)" forState:UIControlStateNormal];
-    [_authManual setTitle:@"Re-authorize (Manual)" forState:UIControlStateHighlighted];
+    [_authAutoButton setTitle:@"Incremental Auth" forState:UIControlStateNormal];
+    [_authAutoButton setTitle:@"Incremental Auth" forState:UIControlStateHighlighted];
+    [_authManual setTitle:@"Incremental Auth" forState:UIControlStateNormal];
+    [_authManual setTitle:@"Incremental Auth" forState:UIControlStateHighlighted];
   }
 }
 
@@ -200,11 +200,18 @@ static NSString *const kAppAuthExampleAuthStateKey = @"authState";
                       clientSecret:(NSString *)clientSecret {
   NSURL *redirectURI = [NSURL URLWithString:kRedirectURI];
   // builds authentication request
+    
+  NSArray* scopes=  @[ OIDScopeOpenID, OIDScopeProfile, @"https://www.googleapis.com/auth/calendar" ];
+    if (_authState)
+    {
+        scopes = @[@"https://www.google.com/m8/feeds/"];
+    }
+
   OIDAuthorizationRequest *request =
       [[OIDAuthorizationRequest alloc] initWithConfiguration:configuration
                                                     clientId:clientID
                                                 clientSecret:clientSecret
-                                                      scopes:@[ OIDScopeOpenID, OIDScopeProfile ]
+                                                      scopes:scopes
                                                  redirectURL:redirectURI
                                                 responseType:OIDResponseTypeCode
                                         additionalParameters:nil];
@@ -232,15 +239,22 @@ static NSString *const kAppAuthExampleAuthStateKey = @"authState";
                      clientSecret:(NSString *)clientSecret {
   NSURL *redirectURI = [NSURL URLWithString:kRedirectURI];
 
+  NSArray* scopes=  @[  @"https://www.googleapis.com/auth/calendar" ];
+  NSDictionary* additionalParameters = nil;
+  if (_authState)
+  {
+    scopes = @[@"https://www.googleapis.com/auth/blogger"];
+  }
+    
   // builds authentication request
   OIDAuthorizationRequest *request =
       [[OIDAuthorizationRequest alloc] initWithConfiguration:configuration
                                                     clientId:clientID
                                                 clientSecret:clientSecret
-                                                      scopes:@[ OIDScopeOpenID, OIDScopeProfile ]
+                                                      scopes:scopes
                                                  redirectURL:redirectURI
                                                 responseType:OIDResponseTypeCode
-                                        additionalParameters:nil];
+                                        additionalParameters:additionalParameters];
   // performs authentication request
   AppDelegate *appDelegate = (AppDelegate *) [UIApplication sharedApplication].delegate;
   [self logMessage:@"Initiating authorization request %@", request];
@@ -328,9 +342,17 @@ static NSString *const kAppAuthExampleAuthStateKey = @"authState";
 }
 
 - (IBAction)codeExchange:(nullable id)sender {
-  // performs code exchange request
+
+    // Add previous refresh token if one exists.
+    NSDictionary* additionalParameters = nil;
+    if (_lastRefreshToken) {
+        additionalParameters = @{@"existing_grant":_lastRefreshToken};
+    }
+  
+    
+    // performs code exchange request
   OIDTokenRequest *tokenExchangeRequest =
-      [_authState.lastAuthorizationResponse tokenExchangeRequest];
+      [_authState.lastAuthorizationResponse tokenExchangeRequestWithAdditionalParameters:additionalParameters];
 
   [self logMessage:@"Performing authorization code exchange with request [%@]",
                    tokenExchangeRequest];
@@ -343,6 +365,7 @@ static NSString *const kAppAuthExampleAuthStateKey = @"authState";
       [self logMessage:@"Token exchange error: %@", [error localizedDescription]];
     } else {
       [self logMessage:@"Received token response with accessToken: %@", tokenResponse.accessToken];
+        _lastRefreshToken = tokenResponse.refreshToken;
     }
 
     [_authState updateWithTokenResponse:tokenResponse error:error];
@@ -351,10 +374,107 @@ static NSString *const kAppAuthExampleAuthStateKey = @"authState";
 
 - (IBAction)clearAuthState:(nullable id)sender {
   [self setAuthState:nil];
+  _lastRefreshToken = nil;
 }
 
 - (IBAction)clearLog:(nullable id)sender {
   _logTextView.text = @"";
+}
+
+
+- (IBAction)tokenInfo:(nullable id)sender {
+  NSURL *userinfoEndpoint =
+      _authState.lastAuthorizationResponse.request.configuration.discoveryDocument.userinfoEndpoint;
+  if (!userinfoEndpoint) {
+    [self logMessage:@"Userinfo endpoint not declared in discovery document"];
+    return;
+  }
+  
+  NSString *currentAccessToken = _authState.lastTokenResponse.accessToken;
+
+  [_authState performActionWithFreshTokens:^(NSString *_Nonnull accessToken,
+                                             NSString *_Nonnull idToken,
+                                             NSError *_Nullable error) {
+    if (error) {
+      [self logMessage:@"Error fetching fresh tokens: %@", [error localizedDescription]];
+      return;
+    }
+
+    // log whether a token refresh occurred
+    if (![currentAccessToken isEqual:accessToken]) {
+      [self logMessage:@"Access token was refreshed automatically (%@ to %@)",
+                         currentAccessToken,
+                         accessToken];
+    } else {
+      [self logMessage:@"Access token was fresh and not updated [%@]", accessToken];
+    }
+    
+    NSString *tokenInfoURLString =
+        [NSString stringWithFormat:@"https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=%@",
+                                   _authState.lastTokenResponse.accessToken];
+    [self logMessage:@"Performing token introspection: %@", tokenInfoURLString];
+    NSURL *tokenInfoURL = [NSURL URLWithString:tokenInfoURLString];
+    
+
+
+    // creates request to the userinfo endpoint, with access token in the Authorization header
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:tokenInfoURL];
+
+    NSURLSessionConfiguration *configuration =
+        [NSURLSessionConfiguration defaultSessionConfiguration];
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration
+                                                          delegate:nil
+                                                     delegateQueue:nil];
+
+    // performs HTTP request
+    NSURLSessionDataTask *postDataTask =
+        [session dataTaskWithRequest:request
+                   completionHandler:^(NSData *_Nullable data,
+                                       NSURLResponse *_Nullable response,
+                                       NSError *_Nullable error) {
+      dispatch_async(dispatch_get_main_queue(), ^() {
+        if (error) {
+          [self logMessage:@"HTTP request failed %@", error];
+          return;
+        }
+        if (![response isKindOfClass:[NSHTTPURLResponse class]]) {
+          [self logMessage:@"Non-HTTP response"];
+          return;
+        }
+
+        NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
+        id jsonDictionaryOrArray =
+            [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+
+        if (httpResponse.statusCode != 200) {
+          // server replied with an error
+          NSString *responseText = [[NSString alloc] initWithData:data
+                                                         encoding:NSUTF8StringEncoding];
+          if (httpResponse.statusCode == 401) {
+            // "401 Unauthorized" generally indicates there is an issue with the authorization
+            // grant. Puts OIDAuthState into an error state.
+            NSError *oauthError =
+                [OIDErrorUtilities resourceServerAuthorizationErrorWithCode:0
+                                                              errorResponse:jsonDictionaryOrArray
+                                                            underlyingError:error];
+            [_authState updateWithAuthorizationError:oauthError];
+            // log error
+            [self logMessage:@"Authorization Error (%@). Response: %@", oauthError, responseText];
+          } else {
+            [self logMessage:@"HTTP: %d. Response: %@",
+                             (int)httpResponse.statusCode,
+                             responseText];
+          }
+          return;
+        }
+
+        // success response
+        [self logMessage:@"Success: %@", jsonDictionaryOrArray];
+      });
+    }];
+
+    [postDataTask resume];
+  }];
 }
 
 - (IBAction)userinfo:(nullable id)sender {
@@ -364,6 +484,9 @@ static NSString *const kAppAuthExampleAuthStateKey = @"authState";
     [self logMessage:@"Userinfo endpoint not declared in discovery document"];
     return;
   }
+    
+    [self logMessage:@"https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=%@", _authState.lastTokenResponse.accessToken];
+    
   NSString *currentAccessToken = _authState.lastTokenResponse.accessToken;
 
   [self logMessage:@"Performing userinfo request"];
